@@ -23,7 +23,8 @@ class InternetHelper(private val context: Context) {
     private val roomAdapter = moshi.adapter(InternetRoomState::class.java)
     private val userAdapter = moshi.adapter(UserProfile::class.java)
 
-    private val bucketUrl = "https://kvdb.io/kendi_app_sec_4938fd83a2"
+    private val bucketUrl = "https://kvdb.io/kendi_v11_p2p_9942a73bdf"
+    private var lastUpdateError: String = ""
 
     // Generate a unique client ID per app launch/install
     val clientId: String by lazy {
@@ -224,9 +225,17 @@ class InternetHelper(private val context: Context) {
         val request = Request.Builder().url(url).put(body).build()
         try {
             client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string() ?: ""
+                    lastUpdateError = "Sunucu Hatası (Kod: ${response.code}, Detay: ${errorBody.take(100).trim()})"
+                    Log.e("InternetHelper", "updateUserProfile failed: $lastUpdateError")
+                } else {
+                    lastUpdateError = ""
+                }
                 return@withContext response.isSuccessful
             }
         } catch (e: Exception) {
+            lastUpdateError = "Bağlantı Hatası: ${e.message}"
             Log.e("InternetHelper", "Error updating user profile: ${e.message}")
             return@withContext false
         }
@@ -254,7 +263,8 @@ class InternetHelper(private val context: Context) {
         if (success) {
             return@withContext null // Success
         } else {
-            return@withContext "Kayıt işlemi başarısız oldu. Sunucu hatası."
+            val detail = if (lastUpdateError.isNotEmpty()) lastUpdateError else "Bilinmeyen Sunucu Hatası"
+            return@withContext "Kayıt işlemi başarısız oldu: $detail"
         }
     }
 
