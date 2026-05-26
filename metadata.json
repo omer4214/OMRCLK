@@ -1,0 +1,6 @@
+{
+  "name": "Kendi",
+  "description": "Kendi aramızda mesajlaşma, dosya aktarımı ve sohbet yapabilen, aynı ağda Wi-Fi üzerinden (aşırı hızlı lokal bağlantı) ve dışında ise internet üzerinden gerçek zamanlı haberleşme sağlayan modern Android uygulaması.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
