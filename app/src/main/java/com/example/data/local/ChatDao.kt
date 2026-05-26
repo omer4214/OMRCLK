@@ -8,6 +8,9 @@ interface ChatDao {
     @Query("SELECT * FROM messages WHERE peerId = :peerId ORDER BY timestamp ASC")
     fun getMessagesForPeer(peerId: String): Flow<List<MessageEntity>>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE internetId = :internetId LIMIT 1)")
+    suspend fun messageExistsByInternetId(internetId: String): Boolean
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity): Long
 

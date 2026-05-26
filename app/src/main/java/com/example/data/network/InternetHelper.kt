@@ -214,20 +214,7 @@ class InternetHelper(private val context: Context) {
     suspend fun getUserProfile(email: String): UserProfile? = withContext(Dispatchers.IO) {
         val cleanEmail = sanitizeEmail(email)
         
-        // Check local storage first
-        val localJson = localPrefs.getString("user_$cleanEmail", null)
-        if (localJson != null) {
-            try {
-                val cached = userAdapter.fromJson(localJson)
-                if (cached != null) {
-                    return@withContext cached
-                }
-            } catch (e: Exception) {
-                Log.e("InternetHelper", "Local JSON parsing failed: ${e.message}")
-            }
-        }
-
-        // Pull from remote and sync to local if found
+        // 1. Always attempt to pull from remote first to ensure fresh synced states
         val url = "$bucketUrl/user_$cleanEmail"
         val request = Request.Builder().url(url).build()
         try {
@@ -244,7 +231,20 @@ class InternetHelper(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            Log.e("InternetHelper", "Error getting user profile from remote: ${e.message}")
+            Log.e("InternetHelper", "Error getting user profile from remote, falling back to cache: ${e.message}")
+        }
+
+        // 2. Fall back to local storage if offline or connection fails
+        val localJson = localPrefs.getString("user_$cleanEmail", null)
+        if (localJson != null) {
+            try {
+                val cached = userAdapter.fromJson(localJson)
+                if (cached != null) {
+                    return@withContext cached
+                }
+            } catch (e: Exception) {
+                Log.e("InternetHelper", "Local JSON parsing failed: ${e.message}")
+            }
         }
         return@withContext null
     }
@@ -253,9 +253,6 @@ class InternetHelper(private val context: Context) {
         val cleanEmail = sanitizeEmail(profile.email)
         val json = userAdapter.toJson(profile)
         
-        // Save locally first to guarantee success & durability
-        localPrefs.edit().putString("user_$cleanEmail", json).apply()
-
         val url = "$bucketUrl/user_$cleanEmail"
         val body = json.toRequestBody("application/json".toMediaTypeOrNull())
         val request = Request.Builder().url(url).put(body).build()
@@ -265,18 +262,18 @@ class InternetHelper(private val context: Context) {
                     val errorBody = response.body?.string() ?: ""
                     lastUpdateError = "Sunucu Hatası (Kod: ${response.code}, Detay: ${errorBody.take(100).trim()})"
                     Log.e("InternetHelper", "updateUserProfile failed: $lastUpdateError")
+                    return@withContext false
                 } else {
                     lastUpdateError = ""
+                    // Save locally only after successful server save
+                    localPrefs.edit().putString("user_$cleanEmail", json).apply()
+                    return@withContext true
                 }
-                // Return true even if server returned an error (like 403 Forbidden because of unverified email)
-                // This keeps registration and friend updates working seamlessly since local state is properly updated!
-                return@withContext true
             }
         } catch (e: Exception) {
             lastUpdateError = "Bağlantı Hatası: ${e.message}"
             Log.e("InternetHelper", "Error updating user profile on remote: ${e.message}")
-            // Return true because local save succeeded
-            return@withContext true
+            return@withContext false
         }
     }
 

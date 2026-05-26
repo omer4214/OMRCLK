@@ -145,10 +145,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var messagesJob: Job? = null
+
     fun selectPeer(peer: PeerEntity?) {
         selectedPeer = peer
+        messagesJob?.cancel()
         if (peer != null) {
-            viewModelScope.launch {
+            messagesJob = viewModelScope.launch {
                 repository.getMessages(peer.peerId).collect {
                     _currentMessages.value = it
                 }

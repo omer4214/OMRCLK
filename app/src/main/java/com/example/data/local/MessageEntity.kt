@@ -14,5 +14,6 @@ data class MessageEntity(
     val fileSize: Long = 0,          // File size in bytes
     val isVoiceMessage: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val status: String = "SENT"      // "PREPARING", "SENDING", "SENT", "RECEIVED", "FAILED"
+    val status: String = "SENT",      // "PREPARING", "SENDING", "SENT", "RECEIVED", "FAILED"
+    val internetId: String? = null    // Server-assigned unique UUID to prevent duplicates
 )

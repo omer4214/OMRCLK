@@ -204,14 +204,23 @@ class ChatRepository(
         stopInternetSync()
         syncJob = scope.launch {
             val seenServerMessageIds = mutableSetOf<String>()
+            var lastPresenceTime = 0L
             
             while (isActive) {
                 try {
-                    // Step 1: Update Presence
-                    val myIp = getMyLocalIp()
-                    internetHelper.updatePresence(roomCode, myNickname, myIp)
+                    val now = System.currentTimeMillis()
+                    // Step 1: Update Presence (Only once every 30 seconds to bypass heavy load and rate limiting)
+                    if (now - lastPresenceTime > 30000L) {
+                        try {
+                            val myIp = getMyLocalIp()
+                            internetHelper.updatePresence(roomCode, myNickname, myIp)
+                            lastPresenceTime = now
+                        } catch (e: Exception) {
+                            Log.e("ChatRepository", "Failed to update presence: ${e.message}")
+                        }
+                    }
 
-                    // Step 2: Fetch updates
+                    // Step 2: Fetch updates (Only one GET request per loop cycle!)
                     val state = internetHelper.getRoomState(roomCode)
                     if (state != null) {
                         // Discover local IPs and automatically update local Peer status!
@@ -230,36 +239,46 @@ class ChatRepository(
                         // Parse messages
                         val peerId = roomCode
                         state.messages.forEach { msg ->
-                            if (!seenServerMessageIds.contains(msg.id)) {
+                            // Fast check using memory and database to filter out duplicates perfectly
+                            if (seenServerMessageIds.contains(msg.id)) {
+                                return@forEach
+                            }
+                            
+                            val existsLocally = chatDao.messageExistsByInternetId(msg.id)
+                            if (existsLocally) {
                                 seenServerMessageIds.add(msg.id)
-                                
-                                // Only process if not sent by me
-                                if (msg.senderId != internetHelper.clientId) {
-                                    // See if it is a file we need to download/preview
-                                    var localPath: String? = null
-                                    if (msg.downloadUrl != null && msg.fileName != null) {
-                                        // Auto-download file in background!
-                                        val downloadedFile = internetHelper.downloadFile(msg.downloadUrl, msg.fileName)
-                                        if (downloadedFile != null) {
-                                            localPath = downloadedFile.absolutePath
-                                        }
-                                    }
+                                return@forEach
+                            }
 
-                                    // Save received message to native Room database
-                                    chatDao.insertMessage(
-                                        MessageEntity(
-                                            peerId = peerId,
-                                            sender = "peer",
-                                            text = msg.text,
-                                            filePath = localPath,
-                                            fileName = msg.fileName,
-                                            fileSize = msg.fileSize,
-                                            isVoiceMessage = msg.isVoiceMessage,
-                                            timestamp = msg.timestamp,
-                                            status = "RECEIVED"
-                                        )
-                                    )
+                            seenServerMessageIds.add(msg.id)
+                            
+                            // Only process if not sent by me
+                            if (msg.senderId != internetHelper.clientId) {
+                                // See if it is a file we need to download/preview
+                                var localPath: String? = null
+                                if (msg.downloadUrl != null && msg.fileName != null) {
+                                    // Auto-download file in background!
+                                    val downloadedFile = internetHelper.downloadFile(msg.downloadUrl, msg.fileName)
+                                    if (downloadedFile != null) {
+                                        localPath = downloadedFile.absolutePath
+                                    }
                                 }
+
+                                // Save received message to native Room database
+                                chatDao.insertMessage(
+                                    MessageEntity(
+                                        peerId = peerId,
+                                        sender = "peer",
+                                        text = msg.text,
+                                        filePath = localPath,
+                                        fileName = msg.fileName,
+                                        fileSize = msg.fileSize,
+                                        isVoiceMessage = msg.isVoiceMessage,
+                                        timestamp = msg.timestamp,
+                                        status = "RECEIVED",
+                                        internetId = msg.id
+                                    )
+                                )
                             }
                         }
                     }
