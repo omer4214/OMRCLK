@@ -32,6 +32,7 @@ import android.provider.Settings
 import android.widget.Toast
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.FileOutputStream
 import java.io.IOException
@@ -381,17 +382,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Support direct APK URLs if entered
         if (repo.startsWith("http://", ignoreCase = true) || repo.startsWith("https://", ignoreCase = true)) {
             updateStatus = "AVAILABLE"
-            updateVersionName = "Doğrudan Bağlantı"
+            updateVersionName = "Doğrudan Bağlantı Sürüm 1.1"
             updateDownloadUrl = repo
             
             val lastSlash = repo.lastIndexOf('/')
             val baseName = if (lastSlash != -1) repo.substring(lastSlash + 1) else "direct_download"
-            // Ensure the downloaded file is saved with .apk extension
-            updateApkFileName = if (baseName.endsWith(".apk", ignoreCase = true)) {
-                baseName
+            // Ensure the downloaded file is saved with version tag in its name for clarity
+            val baseWithoutExtension = if (baseName.endsWith(".apk", ignoreCase = true)) {
+                baseName.substring(0, baseName.length - 4)
             } else {
-                "dynamic_update.apk"
+                baseName
             }
+            updateApkFileName = "${baseWithoutExtension}_1.1.apk"
             return
         }
 
@@ -406,6 +408,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         updateErrorMessage = ""
 
         viewModelScope.launch(Dispatchers.IO) {
+            val client = OkHttpClient()
+            var foundApk = false
+            var errorMessage = ""
+            var downloadUrlResult = ""
+            var apkFileNameResult = ""
+            var versionNameResult = ""
+
+            // Phase 1: Try checking latest Releases
             try {
                 val url = "https://api.github.com/repos/$repo/releases/latest"
                 val request = Request.Builder()
@@ -413,44 +423,127 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .header("User-Agent", "Kendi-App-Updater")
                     .build()
                 
-                val client = OkHttpClient()
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw IOException("HTTP hata kodu: ${response.code}")
-                    }
-                    val bodyString = response.body?.string() ?: throw IOException("Boş yanıt gövdesi")
-                    val json = JSONObject(bodyString)
-                    val tag = json.optString("tag_name", "Bilinmeyen")
-                    val assets = json.optJSONArray("assets")
-                    
-                    var foundApk = false
-                    if (assets != null && assets.length() > 0) {
-                        for (i in 0 until assets.length()) {
-                            val asset = assets.getJSONObject(i)
-                            val name = asset.optString("name", "")
-                            if (name.endsWith(".apk", ignoreCase = true)) {
-                                updateDownloadUrl = asset.optString("browser_download_url", "")
-                                updateApkFileName = name
-                                updateVersionName = tag
-                                foundApk = true
-                                break
+                    if (response.isSuccessful) {
+                        val bodyString = response.body?.string()
+                        if (!bodyString.isNullOrBlank()) {
+                            val json = JSONObject(bodyString)
+                            val tag = json.optString("tag_name", "v1.1")
+                            val assets = json.optJSONArray("assets")
+                            if (assets != null && assets.length() > 0) {
+                                for (i in 0 until assets.length()) {
+                                    val asset = assets.getJSONObject(i)
+                                    val name = asset.optString("name", "")
+                                    if (name.endsWith(".apk", ignoreCase = true)) {
+                                        downloadUrlResult = asset.optString("browser_download_url", "")
+                                        apkFileNameResult = name
+                                        versionNameResult = tag
+                                        foundApk = true
+                                        break
+                                    }
+                                }
+                            }
+                            if (!foundApk) {
+                                errorMessage = "$tag sürümünde hiç APK dosyası bulunamadı."
                             }
                         }
-                    }
-
-                    viewModelScope.launch(Dispatchers.Main) {
-                        if (foundApk) {
-                            updateStatus = "AVAILABLE"
-                        } else {
-                            updateStatus = "NOT_AVAILABLE"
-                            updateErrorMessage = "$tag sürümünde hiç APK dosyası bulunamadı."
-                        }
+                    } else {
+                        errorMessage = "Release bulunamadı (Kod: ${response.code})"
                     }
                 }
             } catch (e: Exception) {
-                viewModelScope.launch(Dispatchers.Main) {
+                errorMessage = "Sürüm arama hatası: ${e.message}"
+            }
+
+            // Phase 2: If no release/APK found, fallback to scanning files in repository root!
+            if (!foundApk) {
+                try {
+                    val url = "https://api.github.com/repos/$repo/contents"
+                    val request = Request.Builder()
+                        .url(url)
+                        .header("User-Agent", "Kendi-App-Updater")
+                        .build()
+
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val bodyString = response.body?.string()
+                            if (!bodyString.isNullOrBlank()) {
+                                val jsonArray = JSONArray(bodyString)
+                                for (i in 0 until jsonArray.length()) {
+                                    val fileObj = jsonArray.getJSONObject(i)
+                                    val name = fileObj.optString("name", "")
+                                    val type = fileObj.optString("type", "")
+                                    if (type == "file" && name.endsWith(".apk", ignoreCase = true)) {
+                                        downloadUrlResult = fileObj.optString("download_url", "")
+                                        apkFileNameResult = name
+                                        versionNameResult = "Sürüm 1.1 (Depo APK)"
+                                        foundApk = true
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ChatViewModel", "Repository contents scan failed: ${e.message}")
+                }
+            }
+
+            // Phase 3: If still not found, try common files via Raw GitHub endpoints directly
+            if (!foundApk) {
+                val commonNames = listOf("debug.apk", "app-debug.apk", "kendi_update.apk", "kendi.apk")
+                for (name in commonNames) {
+                    val rawUrl = "https://raw.githubusercontent.com/$repo/main/$name"
+                    val testRequest = Request.Builder().url(rawUrl).head().build()
+                    try {
+                        client.newCall(testRequest).execute().use { testResponse ->
+                            if (testResponse.isSuccessful) {
+                                downloadUrlResult = rawUrl
+                                apkFileNameResult = name
+                                versionNameResult = "Sürüm 1.1 (Doğrudan)"
+                                foundApk = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore and try next target
+                    }
+                    if (foundApk) break
+
+                    // Try master branch as fallback
+                    val rawUrlMaster = "https://raw.githubusercontent.com/$repo/master/$name"
+                    val testRequestMaster = Request.Builder().url(rawUrlMaster).head().build()
+                    try {
+                        client.newCall(testRequestMaster).execute().use { testResponse ->
+                            if (testResponse.isSuccessful) {
+                                downloadUrlResult = rawUrlMaster
+                                apkFileNameResult = name
+                                versionNameResult = "Sürüm 1.1 (Doğrudan)"
+                                foundApk = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore and try next target
+                    }
+                    if (foundApk) break
+                }
+            }
+
+            viewModelScope.launch(Dispatchers.Main) {
+                if (foundApk) {
+                    updateStatus = "AVAILABLE"
+                    updateDownloadUrl = downloadUrlResult
+                    
+                    val baseWithoutExtension = if (apkFileNameResult.endsWith(".apk", ignoreCase = true)) {
+                        apkFileNameResult.substring(0, apkFileNameResult.length - 4)
+                    } else {
+                        "debug"
+                    }
+                    // Make sure it saves with clear version information
+                    updateApkFileName = "${baseWithoutExtension}_1.1.apk"
+                    updateVersionName = versionNameResult
+                } else {
                     updateStatus = "ERROR"
-                    updateErrorMessage = "Hata: ${e.message}"
+                    updateErrorMessage = "Depoda veya sürümlerde hiçbir APK dosyası bulunamadı. Lütfen 'debug.apk' veya 'app-debug.apk' dosyasını GitHub deponuza yüklediğinizden veya bir Release oluşturduğunuzdan emin olun."
                 }
             }
         }
