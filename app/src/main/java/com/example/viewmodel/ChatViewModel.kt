@@ -22,6 +22,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.io.FileOutputStream
+import java.io.IOException
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
@@ -299,5 +307,219 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         mediaRecorder = null
         mediaPlayer?.release()
         mediaPlayer = null
+    }
+
+    // --- GitHub Auto-Updater States ---
+    var githubRepoInput by mutableStateOf(sharedPrefs.getString("github_repo_input", "napim4214/kendi") ?: "napim4214/kendi")
+        private set
+
+    var updateStatus by mutableStateOf("IDLE") // IDLE, CHECKING, AVAILABLE, NOT_AVAILABLE, DOWNLOADING, DOWNLOADED, ERROR
+        private set
+
+    var updateDownloadProgress by mutableStateOf(0f)
+        private set
+
+    var updateVersionName by mutableStateOf("")
+        private set
+
+    var updateErrorMessage by mutableStateOf("")
+        private set
+
+    var updateDownloadUrl by mutableStateOf("")
+        private set
+
+    var updateApkFileName by mutableStateOf("")
+        private set
+
+    fun updateGithubRepoInput(repo: String) {
+        githubRepoInput = repo
+        sharedPrefs.edit().putString("github_repo_input", repo).apply()
+    }
+
+    fun checkForGithubUpdate(context: Context) {
+        val repo = githubRepoInput.trim()
+        if (repo.isEmpty()) {
+            updateStatus = "ERROR"
+            updateErrorMessage = "Lütfen geçerli bir GitHub depo adresi girin (örn: kullanıcı/depo)"
+            return
+        }
+
+        // Support direct APK URLs if entered
+        if (repo.startsWith("http://", ignoreCase = true) || repo.startsWith("https://", ignoreCase = true)) {
+            if (repo.endsWith(".apk", ignoreCase = true)) {
+                updateStatus = "AVAILABLE"
+                updateVersionName = "Doğrudan Link"
+                updateDownloadUrl = repo
+                val lastSlash = repo.lastIndexOf('/')
+                updateApkFileName = if (lastSlash != -1) repo.substring(lastSlash + 1) else "direct_download.apk"
+                return
+            } else {
+                updateStatus = "ERROR"
+                updateErrorMessage = "Girilen doğrudan URL .apk ile bitmelidir."
+                return
+            }
+        }
+
+        val parts = repo.split("/")
+        if (parts.size != 2) {
+            updateStatus = "ERROR"
+            updateErrorMessage = "Format 'kullanici/depo' şeklinde olmalıdır."
+            return
+        }
+
+        updateStatus = "CHECKING"
+        updateErrorMessage = ""
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = "https://api.github.com/repos/$repo/releases/latest"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Kendi-App-Updater")
+                    .build()
+                
+                val client = OkHttpClient()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP hata kodu: ${response.code}")
+                    }
+                    val bodyString = response.body?.string() ?: throw IOException("Boş yanıt gövdesi")
+                    val json = JSONObject(bodyString)
+                    val tag = json.optString("tag_name", "Bilinmeyen")
+                    val assets = json.optJSONArray("assets")
+                    
+                    var foundApk = false
+                    if (assets != null && assets.length() > 0) {
+                        for (i in 0 until assets.length()) {
+                            val asset = assets.getJSONObject(i)
+                            val name = asset.optString("name", "")
+                            if (name.endsWith(".apk", ignoreCase = true)) {
+                                updateDownloadUrl = asset.optString("browser_download_url", "")
+                                updateApkFileName = name
+                                updateVersionName = tag
+                                foundApk = true
+                                break
+                            }
+                        }
+                    }
+
+                    viewModelScope.launch(Dispatchers.Main) {
+                        if (foundApk) {
+                            updateStatus = "AVAILABLE"
+                        } else {
+                            updateStatus = "NOT_AVAILABLE"
+                            updateErrorMessage = "$tag sürümünde hiç APK dosyası bulunamadı."
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    updateStatus = "ERROR"
+                    updateErrorMessage = "Hata: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun downloadAndInstallApk(context: Context) {
+        val url = updateDownloadUrl
+        val fileName = updateApkFileName
+        if (url.isEmpty()) return
+
+        updateStatus = "DOWNLOADING"
+        updateDownloadProgress = 0f
+        updateErrorMessage = ""
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url(url).build()
+                val client = OkHttpClient()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("İndirme başarısız oldu: ${response.code}")
+                    }
+                    val body = response.body ?: throw IOException("Gövde boş")
+                    val totalBytes = body.contentLength()
+                    
+                    val file = File(context.cacheDir, fileName.ifEmpty { "kendi_update.apk" })
+                    if (file.exists()) {
+                        file.delete()
+                    }
+
+                    body.byteStream().use { input ->
+                        FileOutputStream(file).use { output ->
+                            val buffer = ByteArray(8192)
+                            var bytesRead: Int
+                            var totalRead: Long = 0
+                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                output.write(buffer, 0, bytesRead)
+                                totalRead += bytesRead
+                                if (totalBytes > 0) {
+                                    val progress = totalRead.toFloat() / totalBytes.toFloat()
+                                    viewModelScope.launch(Dispatchers.Main) {
+                                        updateDownloadProgress = progress
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    viewModelScope.launch(Dispatchers.Main) {
+                        updateStatus = "DOWNLOADED"
+                        updateDownloadProgress = 1.0f
+                        installApkIntent(context, file)
+                    }
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    updateStatus = "ERROR"
+                    updateErrorMessage = "İndirme hatası: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun installApkIntent(context: Context, apkFile: File) {
+        try {
+            if (!apkFile.exists()) {
+                Toast.makeText(context, "Yükleme dosyası bulunamadı.", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    Toast.makeText(context, "Lütfen harici yükleme iznini veriniz.", Toast.LENGTH_LONG).show()
+                    val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(settingsIntent)
+                    return
+                }
+            }
+
+            val apkUri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            context.startActivity(installIntent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Yükleyici başlatılamadı: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e("ChatViewModel", "Install Activity Error: ${e.message}", e)
+        }
+    }
+
+    fun resetUpdateStatus() {
+        updateStatus = "IDLE"
+        updateDownloadProgress = 0f
+        updateErrorMessage = ""
     }
 }

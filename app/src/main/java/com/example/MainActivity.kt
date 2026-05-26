@@ -349,6 +349,205 @@ fun ConversationListScreen(
                 }
             }
 
+            // GitHub Release Updater & Installer Card
+            item {
+                Card(
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Güncelleme", tint = BrilliantLavender)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "GitHub Doğrudan Güncelleyici & Kurucu",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            "GitHub Releases kısmından en son APK dosyasını veya yazdığınız doğrudan bir .apk linkini anında indirip kurabilirsiniz.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                        )
+
+                        var repoInputText by remember { mutableStateOf(viewModel.githubRepoInput) }
+
+                        OutlinedTextField(
+                            value = repoInputText,
+                            onValueChange = { 
+                                repoInputText = it
+                                viewModel.updateGithubRepoInput(it)
+                            },
+                            placeholder = { Text("Örn: kullanıcı/depo veya https://.../yeni.apk") },
+                            label = { Text("GitHub Deposu veya Doğrudan APK Linki") },
+                            leadingIcon = { Icon(Icons.Default.Build, contentDescription = "Sürüm") },
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = viewModel.updateStatus == "IDLE" || viewModel.updateStatus == "ERROR" || viewModel.updateStatus == "NOT_AVAILABLE",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("github_repo_input")
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        when (viewModel.updateStatus) {
+                            "IDLE" -> {
+                                Button(
+                                    onClick = {
+                                        viewModel.checkForGithubUpdate(context)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("check_github_update_button"),
+                                    colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender)
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = "Kontrol et")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Güncelleme/APK Denetle", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            "CHECKING" -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = BrilliantLavender,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text("GitHub releases sorgulanıyor...", fontSize = 14.sp)
+                                }
+                            }
+                            "AVAILABLE" -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "Sürüm Tespit Edildi: ${viewModel.updateVersionName}",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = ElegantGreen
+                                    )
+                                    Text(
+                                        text = "Dosya: ${viewModel.updateApkFileName}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = { viewModel.downloadAndInstallApk(context) },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = ElegantGreen)
+                                        ) {
+                                            Icon(Icons.Default.Download, contentDescription = "Indir")
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Şimdi Kur", fontWeight = FontWeight.Bold)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { viewModel.resetUpdateStatus() },
+                                            modifier = Modifier.weight(0.5f)
+                                        ) {
+                                            Text("Vazgeç")
+                                        }
+                                    }
+                                }
+                            }
+                            "DOWNLOADING" -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    val pct = (viewModel.updateDownloadProgress * 100).toInt()
+                                    Text(
+                                        text = "Yeni sürüm APK indiriliyor: %$pct",
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { viewModel.updateDownloadProgress },
+                                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                                        color = BrilliantLavender
+                                    )
+                                }
+                            }
+                            "DOWNLOADED" -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "Dosya başarıyla indirildi!",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = ElegantGreen
+                                    )
+                                    Text(
+                                        text = "Kurulum penceresi açıldı. Açılmadıysa alttaki butona tıklayın.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = { 
+                                                val file = File(context.cacheDir, viewModel.updateApkFileName)
+                                                viewModel.installApkIntent(context, file)
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender)
+                                        ) {
+                                            Text("Yükleyiciyi Tekrar Aç", fontWeight = FontWeight.Bold)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { viewModel.resetUpdateStatus() },
+                                            modifier = Modifier.weight(0.5f)
+                                        ) {
+                                            Text("Kapat")
+                                        }
+                                    }
+                                }
+                            }
+                            "NOT_AVAILABLE" -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = viewModel.updateErrorMessage.ifEmpty { "Uygulama zaten güncel!" },
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { viewModel.resetUpdateStatus() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Tamam")
+                                    }
+                                }
+                            }
+                            "ERROR" -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = viewModel.updateErrorMessage,
+                                        fontSize = 13.sp,
+                                        color = CoralRose,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { viewModel.resetUpdateStatus() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
+                                    ) {
+                                        Text("Kapat / Yeniden Dene")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Chat History Title Header
             item {
                 Text(
