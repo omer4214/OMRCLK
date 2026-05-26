@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -83,34 +84,203 @@ fun KendiAppScreen(
     val peers by viewModel.allPeers.collectAsState()
     val messages by viewModel.currentMessages.collectAsState()
     val selectedPeer = viewModel.selectedPeer
+    var guestMode by remember { mutableStateOf(false) }
 
-    // Activity transition animations based on selected contact
-    AnimatedContent(
-        targetState = selectedPeer,
-        transitionSpec = {
-            if (targetState != null) {
-                slideInHorizontally(initialOffsetX = { it }) + fadeIn() with
-                        slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+    if (viewModel.loggedInEmail.isEmpty() && !guestMode) {
+        AuthScreen(
+            viewModel = viewModel,
+            onGuestMode = { guestMode = true },
+            modifier = modifier
+        )
+    } else {
+        // Activity transition animations based on selected contact
+        AnimatedContent(
+            targetState = selectedPeer,
+            transitionSpec = {
+                if (targetState != null) {
+                    slideInHorizontally(initialOffsetX = { it }) + fadeIn() with
+                            slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+                } else {
+                    slideInHorizontally(initialOffsetX = { -it }) + fadeIn() with
+                            slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                }
+            },
+            label = "ScreenTransition"
+        ) { peer ->
+            if (peer == null) {
+                ConversationListScreen(
+                    viewModel = viewModel,
+                    peers = peers,
+                    onOpenLogin = { guestMode = false },
+                    modifier = modifier
+                )
             } else {
-                slideInHorizontally(initialOffsetX = { -it }) + fadeIn() with
-                        slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                ChatScreen(
+                    viewModel = viewModel,
+                    peer = peer,
+                    messages = messages,
+                    modifier = modifier
+                )
             }
-        },
-        label = "ScreenTransition"
-    ) { peer ->
-        if (peer == null) {
-            ConversationListScreen(
-                viewModel = viewModel,
-                peers = peers,
-                modifier = modifier
-            )
-        } else {
-            ChatScreen(
-                viewModel = viewModel,
-                peer = peer,
-                messages = messages,
-                modifier = modifier
-            )
+        }
+    }
+}
+
+@Composable
+fun AuthScreen(
+    viewModel: ChatViewModel,
+    onGuestMode: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isRegisterState by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 450.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = "Logo",
+                    tint = BrilliantLavender,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Kendi",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = if (isRegisterState) "Yeni hesap oluşturun" else "Hesabınıza giriş yapın",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                if (isRegisterState) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Ad Soyad") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("auth_name_field")
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("E-posta Adresi") },
+                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("auth_email_field")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Şifre") },
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().testTag("auth_password_field")
+                )
+
+                if (viewModel.authError.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = viewModel.authError,
+                        color = CoralRose,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                if (viewModel.isAuthLoading) {
+                    CircularProgressIndicator(color = BrilliantLavender)
+                } else {
+                    Button(
+                        onClick = {
+                            if (isRegisterState) {
+                                viewModel.performRegister(email, password, name)
+                            } else {
+                                viewModel.performLogin(email, password)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("auth_submit_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender)
+                    ) {
+                        Text(
+                            text = if (isRegisterState) "Kayıt Ol" else "Giriş Yap",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    TextButton(
+                        onClick = { isRegisterState = !isRegisterState; viewModel.authError = "" }
+                    ) {
+                        Text(
+                            text = if (isRegisterState) "Zaten bir hesabınız var mı? Giriş yapın" else "Hesabınız yok mu? Kayıt olmak için tıklayın",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BrilliantLavender
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TextButton(
+                        onClick = onGuestMode
+                    ) {
+                        Text(
+                            text = "Misafir Olarak Giriş Yap (P2P / Wi-Fi Modu)",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -120,6 +290,7 @@ fun KendiAppScreen(
 fun ConversationListScreen(
     viewModel: ChatViewModel,
     peers: List<PeerEntity>,
+    onOpenLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var buddyIp by remember { mutableStateOf("") }
@@ -168,7 +339,7 @@ fun ConversationListScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Profile Quick View
+        // Profile Quick View / Authenticated info
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
             shape = RoundedCornerShape(16.dp),
@@ -180,6 +351,11 @@ fun ConversationListScreen(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val avatarText = if (viewModel.loggedInEmail.isNotEmpty()) {
+                    viewModel.loggedInName.take(2).uppercase()
+                } else {
+                    viewModel.myNickname.take(2).uppercase()
+                }
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -187,25 +363,67 @@ fun ConversationListScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = viewModel.myNickname.take(2).uppercase(),
+                        text = avatarText,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontSize = 18.sp
                     )
                 }
                 Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(
-                        text = "Rumuz: ${viewModel.myNickname}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                Column(modifier = Modifier.weight(1f)) {
+                    if (viewModel.loggedInEmail.isNotEmpty()) {
+                        Text(
+                            text = viewModel.loggedInName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = viewModel.loggedInEmail,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    } else {
+                        Text(
+                            text = "Misafir Modu",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Rumuz: ${viewModel.myNickname}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
                     Text(
                         text = "📶 Wifi IP: ${viewModel.myLocalIp}",
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                     )
+                }
+                
+                if (viewModel.loggedInEmail.isNotEmpty()) {
+                    IconButton(
+                        onClick = { viewModel.performLogout() },
+                        modifier = Modifier.testTag("logout_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ExitToApp,
+                            contentDescription = "Çıkış Yap",
+                            tint = CoralRose
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = onOpenLogin,
+                        colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("Giriş Yap", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
                 }
             }
         }
@@ -217,7 +435,260 @@ fun ConversationListScreen(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Wi-Fi Connection Panel (P2P Client setup)
+            // ------------------ MODERN FRIEND SYSTEM SECTION ------------------
+            if (viewModel.loggedInEmail.isEmpty()) {
+                // Call to action for local guest users
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Star, contentDescription = "Yıldız", tint = BrilliantLavender)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Kolay Sadece E-Posta ile Bağlantı", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Arkadaş ekleme, e-posta ile istek atma ve IP adresi girmeden anında mesajlaşmak için e-posta ve şifrenizle giriş yapın.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = onOpenLogin,
+                                modifier = Modifier.fillMaxWidth().height(40.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Giriş Yap / Üye Ol", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                            }
+                        }
+                    }
+                }
+            } else {
+                // FRIEND FINDER & MANAGEMENT CARD
+                item {
+                    var friendEmailInput by remember { mutableStateOf("") }
+                    
+                    Card(
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Person, contentDescription = "Arkadaş", tint = BrilliantLavender)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("E-Posta ile Arkadaş Ekle", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            }
+                            Text(
+                                "Arkadaşınızın sisteme üye olduğu e-posta adresini yazarak istek gönderin. Kabul ettiğinde IP girmeden yazışabilirsiniz.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                            )
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = friendEmailInput,
+                                    onValueChange = { friendEmailInput = it },
+                                    placeholder = { Text("Örn: arkadas@gmail.com") },
+                                    label = { Text("Arkadaşının E-postası") },
+                                    shape = RoundedCornerShape(12.dp),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f).testTag("friend_email_input")
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        val target = friendEmailInput.trim()
+                                        if (target.isEmpty()) {
+                                            Toast.makeText(context, "Lütfen bir e-posta adresi yazın.", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            viewModel.sendFriendRequestByEmail(target) { result ->
+                                                Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                                                if (result.contains("başarıyla") || result.contains("kabul")) {
+                                                    friendEmailInput = ""
+                                                }
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = BrilliantLavender),
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.size(52.dp).testTag("friend_request_send_button")
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = "Gönder", tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // INCOMING FRIEND REQUESTS LIST
+                if (viewModel.pendingIncomingList.isNotEmpty()) {
+                    item {
+                        Card(
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Notifications, contentDescription = "İstekler", tint = WarningAmber)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Gelen Arkadaşlık İstekleri", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                viewModel.pendingIncomingList.forEach { requestor ->
+                                    val displayName = viewModel.userNamesCache[requestor] ?: requestor
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(displayName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text(requestor, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Row {
+                                            Button(
+                                                onClick = {
+                                                    viewModel.acceptFriendRequestByEmail(requestor) { res ->
+                                                        Toast.makeText(context, res, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = ElegantGreen),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Text("Kabul Et", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.rejectFriendRequestByEmail(requestor) { res ->
+                                                        Toast.makeText(context, res, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                },
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Text("Yoksay", fontSize = 11.sp, color = CoralRose)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // FRIENDS DIRECTORY LIST (FAST ACCESS FROM HOME SCREEN)
+                item {
+                    Card(
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Face, contentDescription = "Arkadaşlar", tint = BrilliantLavender)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Sistem Arkadaşlarım", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            if (viewModel.friendsList.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "Henüz sıfırdan eklenmiş bir arkadaşınız yok.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            } else {
+                                viewModel.friendsList.forEach { friendEmail ->
+                                    val friendName = viewModel.userNamesCache[friendEmail] ?: friendEmail
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.selectFriendChat(friendEmail) }
+                                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(BrilliantLavenderDim, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = friendName.take(1).uppercase(),
+                                                fontWeight = FontWeight.Bold,
+                                                color = BrilliantLavender,
+                                                fontSize = 14.sp
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(friendName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text(friendEmail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Send,
+                                            contentDescription = "Sohbet Aç",
+                                            tint = BrilliantLavender,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // OUTGOING PENDING REQUESTS
+                if (viewModel.pendingOutgoingList.isNotEmpty()) {
+                    item {
+                        Card(
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Giden Bekleyen İstekler", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                viewModel.pendingOutgoingList.forEach { email ->
+                                    val displayName = viewModel.userNamesCache[email] ?: email
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(displayName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Beklemede...", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Wi-Fi Connection Panel (P2P Client backup setup)
             item {
                 Card(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -1078,25 +1549,49 @@ fun MessageBubble(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    // Trigger Open File Intent or explain path via feedback
-                                    if (message.filePath != null) {
-                                        val file = File(message.filePath)
-                                        if (file.exists()) {
-                                            try {
-                                                // Generate safe path URI context and trigger view
-                                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                                    setDataAndType(Uri.fromFile(file), "*/*")
-                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    if (message.isVoiceMessage) {
+                                        viewModel.toggleVoicePlay(message)
+                                    } else {
+                                        if (message.filePath != null) {
+                                            val file = File(message.filePath)
+                                            if (file.exists()) {
+                                                try {
+                                                    val authority = "${context.packageName}.fileprovider"
+                                                    val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                                        context,
+                                                        authority,
+                                                        file
+                                                    )
+                                                    
+                                                    val extension = file.extension.lowercase()
+                                                    val mimeType = when (extension) {
+                                                        "jpg", "jpeg" -> "image/jpeg"
+                                                        "png" -> "image/png"
+                                                        "gif" -> "image/gif"
+                                                        "pdf" -> "application/pdf"
+                                                        "txt" -> "text/plain"
+                                                        "mp3", "wav", "m4a", "ogg", "aac", "3gp" -> "audio/*"
+                                                        "mp4", "mkv", "avi", "mov" -> "video/*"
+                                                        "zip", "rar" -> "application/zip"
+                                                        "apk" -> "application/vnd.android.package-archive"
+                                                        else -> "*/*"
+                                                    }
+                                                    
+                                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                        setDataAndType(contentUri, mimeType)
+                                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    }
+                                                    context.startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Uyumlu bir görüntüleyici bulunamadı.", Toast.LENGTH_LONG).show()
                                                 }
-                                                context.startActivity(intent)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Dosyayı açmak için uygun program bulunamadı. Konum: ${file.name}", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                Toast.makeText(context, "Dosya bulunamadı.", Toast.LENGTH_SHORT).show()
                                             }
                                         } else {
-                                            Toast.makeText(context, "Dosya bulunamadı.", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Dosya indiriliyor veya yükleniyor olabilir. Lütfen bekleyin.", Toast.LENGTH_SHORT).show()
                                         }
-                                    } else {
-                                        Toast.makeText(context, "Dosya indiriliyor veya yükleniyor olabilir. Lütfen bekleyin.", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                                 .padding(4.dp)

@@ -17,6 +17,11 @@ import com.example.data.local.MessageEntity
 import com.example.data.local.PeerEntity
 import com.example.data.network.NetworkUtils
 import com.example.data.network.P2PServer
+import com.example.data.network.InternetHelper
+import com.example.data.network.UserProfile
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.example.data.repository.ChatRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -71,6 +76,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var currentlyPlayingMessageId by mutableStateOf<Long?>(null)
         private set
 
+    // --- Friend System & Authenticated User States ---
+    private val internetHelper = InternetHelper(application)
+
+    var loggedInEmail by mutableStateOf(sharedPrefs.getString("logged_in_email", "") ?: "")
+        private set
+    var loggedInName by mutableStateOf(sharedPrefs.getString("logged_in_name", "") ?: "")
+        private set
+
+    var friendsList by mutableStateOf<List<String>>(emptyList())
+        private set
+    var pendingIncomingList by mutableStateOf<List<String>>(emptyList())
+        private set
+    var pendingOutgoingList by mutableStateOf<List<String>>(emptyList())
+        private set
+        
+    var isAuthLoading by mutableStateOf(false)
+    var authError by mutableStateOf("")
+
+    // Map of email -> name
+    var userNamesCache by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
     init {
         // Automatically spin up the P2P Server socket listener on port 50005
         p2pServer.startServer()
@@ -78,6 +105,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Start sync if there is a saved room code
         if (currentRoomCode.isNotEmpty()) {
             repository.startInternetSync(currentRoomCode, myNickname)
+        }
+
+        // Automatic persistent login check
+        val savedEmail = sharedPrefs.getString("logged_in_email", "") ?: ""
+        val savedPassword = sharedPrefs.getString("logged_in_password", "") ?: ""
+        if (savedEmail.isNotEmpty() && savedPassword.isNotEmpty()) {
+            performLogin(savedEmail, savedPassword)
         }
     }
 
@@ -522,5 +556,221 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         updateStatus = "IDLE"
         updateDownloadProgress = 0f
         updateErrorMessage = ""
+    }
+
+    // --- Account Authentication and Friend System Implementation ---
+
+    fun performRegister(email: String, passwordHash: String, name: String) {
+        viewModelScope.launch {
+            isAuthLoading = true
+            authError = ""
+            val err = internetHelper.registerUser(email, passwordHash, name)
+            isAuthLoading = false
+            if (err != null) {
+                authError = err
+            } else {
+                performLogin(email, passwordHash)
+            }
+        }
+    }
+
+    fun performLogin(email: String, passwordHash: String) {
+        viewModelScope.launch {
+            isAuthLoading = true
+            authError = ""
+            val profile = internetHelper.loginUser(email, passwordHash)
+            isAuthLoading = false
+            if (profile != null) {
+                loggedInEmail = profile.email
+                loggedInName = profile.name
+                
+                sharedPrefs.edit()
+                    .putString("logged_in_email", profile.email)
+                    .putString("logged_in_password", passwordHash)
+                    .putString("logged_in_name", profile.name)
+                    .apply()
+                
+                // Copy name to nickname
+                updateNickname(profile.name)
+                
+                // Sync friends list
+                refreshFriendsAndRequests()
+                startPeriodicUserSync()
+            } else {
+                authError = "E-posta veya şifre hatalı."
+            }
+        }
+    }
+
+    fun performLogout() {
+        loggedInEmail = ""
+        loggedInName = ""
+        friendsList = emptyList()
+        pendingIncomingList = emptyList()
+        pendingOutgoingList = emptyList()
+        
+        sharedPrefs.edit()
+            .remove("logged_in_email")
+            .remove("logged_in_password")
+            .remove("logged_in_name")
+            .apply()
+        
+        userSyncJob?.cancel()
+        userSyncJob = null
+    }
+
+    private var userSyncJob: Job? = null
+
+    fun startPeriodicUserSync() = viewModelScope.launch {
+        userSyncJob?.cancel()
+        if (loggedInEmail.isEmpty()) return@launch
+        userSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val profile = internetHelper.getUserProfile(loggedInEmail)
+                    if (profile != null) {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            loggedInName = profile.name
+                            friendsList = profile.friends
+                            pendingIncomingList = profile.pendingIncoming
+                            pendingOutgoingList = profile.pendingOutgoing
+                            
+                            resolveUserNames(profile.friends + profile.pendingIncoming + profile.pendingOutgoing)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ChatViewModel", "Periodic profile sync failed: ${e.message}")
+                }
+                delay(10000)
+            }
+        }
+    }
+
+    fun refreshFriendsAndRequests() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (loggedInEmail.isEmpty()) return@launch
+            val profile = internetHelper.getUserProfile(loggedInEmail)
+            if (profile != null) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    loggedInName = profile.name
+                    friendsList = profile.friends
+                    pendingIncomingList = profile.pendingIncoming
+                    pendingOutgoingList = profile.pendingOutgoing
+                    
+                    resolveUserNames(profile.friends + profile.pendingIncoming + profile.pendingOutgoing)
+                }
+            }
+        }
+    }
+
+    private fun resolveUserNames(emails: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedMap = userNamesCache.toMutableMap()
+            var changed = false
+            emails.forEach { email ->
+                if (!updatedMap.containsKey(email)) {
+                    val p = internetHelper.getUserProfile(email)
+                    if (p != null) {
+                        updatedMap[email] = p.name
+                        changed = true
+                        
+                        // Automatically register friend as active Chat Peer
+                        if (friendsList.contains(email)) {
+                            val roomCode = getFriendRoomCode(loggedInEmail, email)
+                            val cleanName = p.name
+                            viewModelScope.launch(Dispatchers.Main) {
+                                repository.registerOrUpdatePeer(
+                                    peerId = roomCode,
+                                    name = cleanName,
+                                    ip = "internet",
+                                    isInternet = true
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (changed) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    userNamesCache = updatedMap
+                }
+            }
+        }
+    }
+
+    fun sendFriendRequestByEmail(targetEmail: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            if (loggedInEmail.isEmpty()) {
+                onResult("Giriş yapmanız gerekmektedir.")
+                return@launch
+            }
+            val res = internetHelper.sendFriendRequest(loggedInEmail, targetEmail)
+            refreshFriendsAndRequests()
+            if (res == "SUCCESS") {
+                onResult("Arkadaşlık isteği başarıyla iletildi.")
+            } else {
+                onResult(res)
+            }
+        }
+    }
+
+    fun acceptFriendRequestByEmail(targetEmail: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            if (loggedInEmail.isEmpty()) return@launch
+            val res = internetHelper.acceptFriendRequest(loggedInEmail, targetEmail)
+            refreshFriendsAndRequests()
+            if (res == "SUCCESS") {
+                onResult("İstek kabul edildi.")
+            } else {
+                onResult(res)
+            }
+        }
+    }
+
+    fun rejectFriendRequestByEmail(targetEmail: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            if (loggedInEmail.isEmpty()) return@launch
+            val res = internetHelper.rejectFriendRequest(loggedInEmail, targetEmail)
+            refreshFriendsAndRequests()
+            if (res == "SUCCESS") {
+                onResult("İstek reddedildi.")
+            } else {
+                onResult(res)
+            }
+        }
+    }
+
+    fun getFriendRoomCode(email1: String, email2: String): String {
+        val sorted = listOf(email1.lowercase().trim(), email2.lowercase().trim()).sorted()
+        val plain = sorted.joinToString("_and_")
+        val cleanRoom = plain.replace("@", "_").replace(".", "_")
+        return "room_friend_$cleanRoom"
+    }
+
+    fun selectFriendChat(friendEmail: String) {
+        val roomCode = getFriendRoomCode(loggedInEmail, friendEmail)
+        val friendName = userNamesCache[friendEmail] ?: friendEmail
+        
+        viewModelScope.launch {
+            repository.registerOrUpdatePeer(
+                peerId = roomCode,
+                name = friendName,
+                ip = "internet",
+                isInternet = true
+            )
+            
+            currentRoomCode = roomCode
+            sharedPrefs.edit().putString("room_code", roomCode).apply()
+            
+            repository.startInternetSync(roomCode, myNickname)
+            
+            val peer = PeerEntity(
+                peerId = roomCode,
+                name = friendName,
+                isInternetFallback = true,
+                lastIp = "internet"
+            )
+            selectPeer(peer)
+        }
     }
 }

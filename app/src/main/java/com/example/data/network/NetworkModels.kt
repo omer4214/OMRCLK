@@ -37,3 +37,13 @@ data class InternetRoomState(
     val peers: Map<String, HandshakePayload> = emptyMap(),
     val messages: List<InternetMessage> = emptyList()
 )
+
+@JsonClass(generateAdapter = true)
+data class UserProfile(
+    val email: String,
+    val passwordHash: String,
+    val name: String,
+    val friends: List<String> = emptyList(),
+    val pendingIncoming: List<String> = emptyList(),
+    val pendingOutgoing: List<String> = emptyList()
+)
