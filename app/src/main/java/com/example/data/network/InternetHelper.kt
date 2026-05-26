@@ -23,92 +23,17 @@ class InternetHelper(private val context: Context) {
     private val roomAdapter = moshi.adapter(InternetRoomState::class.java)
     private val userAdapter = moshi.adapter(UserProfile::class.java)
 
-    private val bucketUrl = "https://kvdb.io/9QYHxe28Fptx6sF1t4tuPr"
+    private val bucketUrl = "https://kvdb.io/kendi_v12_p2p_public_nocert"
     private var lastUpdateError: String = ""
 
     private val localPrefs = context.getSharedPreferences("local_user_profiles", Context.MODE_PRIVATE)
 
     init {
-        // Pre-populate 11 mock/sandbox accounts if they don't exist yet
-        if (!localPrefs.getBoolean("prepopulated_v12_fixed", false)) {
-            val defaultUsers = listOf(
-                UserProfile(
-                    email = "napim4214@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Napim",
-                    friends = listOf("tazmana@gmail.com", "ali@gmail.com", "veli@gmail.com")
-                ),
-                UserProfile(
-                    email = "tazmana@gmail.com",
-                    passwordHash = "12345678",
-                    name = "GKC",
-                    friends = listOf("ali@gmail.com", "veli@gmail.com", "ayse@gmail.com", "napim4214@gmail.com")
-                ),
-                UserProfile(
-                    email = "ali@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Ali",
-                    friends = listOf("tazmana@gmail.com", "veli@gmail.com", "napim4214@gmail.com"),
-                    pendingIncoming = listOf("can@gmail.com")
-                ),
-                UserProfile(
-                    email = "veli@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Veli",
-                    friends = listOf("tazmana@gmail.com", "ali@gmail.com", "napim4214@gmail.com"),
-                    pendingOutgoing = listOf("mustafa@gmail.com")
-                ),
-                UserProfile(
-                    email = "ayse@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Ayşe",
-                    friends = listOf("tazmana@gmail.com", "fatma@gmail.com")
-                ),
-                UserProfile(
-                    email = "mehmet@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Mehmet",
-                    friends = listOf("fatma@gmail.com")
-                ),
-                UserProfile(
-                    email = "fatma@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Fatma",
-                    friends = listOf("ayse@gmail.com", "mehmet@gmail.com")
-                ),
-                UserProfile(
-                    email = "can@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Can",
-                    pendingOutgoing = listOf("ali@gmail.com")
-                ),
-                UserProfile(
-                    email = "elif@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Elif",
-                    friends = listOf("zeynep@gmail.com")
-                ),
-                UserProfile(
-                    email = "zeynep@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Zeynep",
-                    friends = listOf("elif@gmail.com")
-                ),
-                UserProfile(
-                    email = "mustafa@gmail.com",
-                    passwordHash = "12345678",
-                    name = "Mustafa",
-                    pendingIncoming = listOf("veli@gmail.com")
-                )
-            )
-
+        // Clear all previously pre-populated mock/sandbox accounts to comply with "11 hazır hesabı sil sadece eklediğimiz hesaplar olcak"
+        if (!localPrefs.getBoolean("prepopulated_v12_cleaned_completely", false)) {
             val editor = localPrefs.edit()
-            for (u in defaultUsers) {
-                val cleanEmail = sanitizeEmail(u.email)
-                val json = userAdapter.toJson(u)
-                editor.putString("user_$cleanEmail", json)
-            }
-            editor.putBoolean("prepopulated_v12_fixed", true)
+            editor.clear()
+            editor.putBoolean("prepopulated_v12_cleaned_completely", true)
             editor.apply()
         }
     }
@@ -213,7 +138,6 @@ class InternetHelper(private val context: Context) {
             // Create media type
             val mediaType = "application/octet-stream".toMediaTypeOrNull()
             
-            // Build progressive request body (optional simplicity: standard request body)
             val fileBody = RequestBody.create(mediaType, tempFile)
 
             val requestBody = MultipartBody.Builder()
@@ -222,7 +146,7 @@ class InternetHelper(private val context: Context) {
                 .build()
 
             val request = Request.Builder()
-                .url("https://file.io")
+                .url("https://tmpfiles.org/api/v1/upload")
                 .post(requestBody)
                 .build()
 
@@ -230,14 +154,16 @@ class InternetHelper(private val context: Context) {
                 if (response.isSuccessful) {
                     val responseBody = response.body?.string()
                     if (responseBody != null) {
-                        // Manual parse or clean substring extraction to avoid library compile complexity
-                        val linkPrefix = "\"link\":\""
-                        val progressIndex = responseBody.indexOf(linkPrefix)
+                        // Extract URL from json: {"status":"success","data":{"url":"https://tmpfiles.org/XXXX/YYYY"}}
+                        val urlPrefix = "\"url\":\""
+                        val progressIndex = responseBody.indexOf(urlPrefix)
                         if (progressIndex != -1) {
-                            val startIndex = progressIndex + linkPrefix.length
+                            val startIndex = progressIndex + urlPrefix.length
                             val endIndex = responseBody.indexOf("\"", startIndex)
                             if (endIndex != -1) {
-                                return@withContext responseBody.substring(startIndex, endIndex)
+                                val rawUrl = responseBody.substring(startIndex, endIndex)
+                                // Standardize to direct download link: replace "https://tmpfiles.org/" with "https://tmpfiles.org/dl/"
+                                return@withContext rawUrl.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
                             }
                         }
                     }

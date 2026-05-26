@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.util.Log
 import com.example.data.local.ChatDao
 import com.example.data.local.MessageEntity
@@ -10,6 +11,7 @@ import com.example.data.network.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import java.io.File
+import java.io.FileOutputStream
 
 class ChatRepository(
     private val context: Context,
@@ -119,6 +121,21 @@ class ChatRepository(
             )
         )
 
+        // Save a persistent copy locally in the downloads or cache folder so the sender can always play or open it
+        val localFile = try {
+            val targetDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+            val destFile = File(targetDir, "Kendi_Sent_${System.currentTimeMillis()}_$fileName")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            destFile
+        } catch (e: Exception) {
+            null
+        }
+        val localFilePath = localFile?.absolutePath ?: uri.toString()
+
         val tempMsg = MessageEntity(
             id = localMsgId,
             peerId = peer.peerId,
@@ -127,6 +144,7 @@ class ChatRepository(
             fileName = fileName,
             fileSize = fileSize,
             isVoiceMessage = isVoice,
+            filePath = localFilePath,
             status = "SENT"
         )
 
@@ -148,13 +166,13 @@ class ChatRepository(
             }
             return success
         } else {
-            // Online Internet Transfer via file.io secure caching upload
+            // Online Internet Transfer via tmpfiles.org secure caching upload
             if (roomCode.isNullOrBlank()) {
                 chatDao.updateMessage(tempMsg.copy(status = "FAILED"))
                 return false
             }
             try {
-                // Upload to file.io
+                // Upload to tmpfiles.org
                 val downloadUrl = internetHelper.uploadFile(uri, fileName, onProgress)
                 if (downloadUrl != null) {
                     // Send download metadata to Room fallback mailbox
@@ -168,7 +186,7 @@ class ChatRepository(
                         isVoiceMessage = isVoice
                     )
                     if (success) {
-                        chatDao.updateMessage(tempMsg.copy(filePath = uri.toString(), status = "SENT"))
+                        chatDao.updateMessage(tempMsg.copy(filePath = localFilePath, status = "SENT"))
                         return true
                     }
                 }

@@ -86,42 +86,50 @@ fun KendiAppScreen(
     val selectedPeer = viewModel.selectedPeer
     var guestMode by remember { mutableStateOf(false) }
 
-    if (viewModel.loggedInEmail.isEmpty() && !guestMode) {
-        AuthScreen(
-            viewModel = viewModel,
-            onGuestMode = { guestMode = true },
-            modifier = modifier
-        )
-    } else {
-        // Activity transition animations based on selected contact
-        AnimatedContent(
-            targetState = selectedPeer,
-            transitionSpec = {
-                if (targetState != null) {
-                    slideInHorizontally(initialOffsetX = { it }) + fadeIn() with
-                            slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+    Box(modifier = modifier.fillMaxSize()) {
+        if (viewModel.loggedInEmail.isEmpty() && !guestMode) {
+            AuthScreen(
+                viewModel = viewModel,
+                onGuestMode = { guestMode = true },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // Activity transition animations based on selected contact
+            AnimatedContent(
+                targetState = selectedPeer,
+                transitionSpec = {
+                    if (targetState != null) {
+                        slideInHorizontally(initialOffsetX = { it }) + fadeIn() with
+                                slideOutHorizontally(targetOffsetX = { -it }) + fadeOut()
+                    } else {
+                        slideInHorizontally(initialOffsetX = { -it }) + fadeIn() with
+                                slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                    }
+                },
+                label = "ScreenTransition"
+            ) { peer ->
+                if (peer == null) {
+                    ConversationListScreen(
+                        viewModel = viewModel,
+                        peers = peers,
+                        onOpenLogin = { guestMode = false },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 } else {
-                    slideInHorizontally(initialOffsetX = { -it }) + fadeIn() with
-                            slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                    ChatScreen(
+                        viewModel = viewModel,
+                        peer = peer,
+                        messages = messages,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
-            },
-            label = "ScreenTransition"
-        ) { peer ->
-            if (peer == null) {
-                ConversationListScreen(
-                    viewModel = viewModel,
-                    peers = peers,
-                    onOpenLogin = { guestMode = false },
-                    modifier = modifier
-                )
-            } else {
-                ChatScreen(
-                    viewModel = viewModel,
-                    peer = peer,
-                    messages = messages,
-                    modifier = modifier
-                )
             }
+        }
+
+        // --- Active VoIP Audio Call Dialog Overlay Canvas ---
+        val activeCallPeer = viewModel.activeCallPeer
+        if (activeCallPeer != null) {
+            VoiceCallOverlay(viewModel = viewModel, peer = activeCallPeer)
         }
     }
 }
@@ -1298,6 +1306,19 @@ fun ChatScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            IconButton(
+                onClick = { viewModel.initiateVoiceCall(peer) },
+                modifier = Modifier.testTag("voice_call_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Call,
+                    contentDescription = "Sesli Arama",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
         }
 
         Divider(color = MaterialTheme.colorScheme.surfaceVariant)
@@ -1701,4 +1722,219 @@ fun formatFileSize(bytes: Long): String {
     val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
     if (digitGroups < 0 || digitGroups >= units.size) return "$bytes B"
     return String.format(Locale.getDefault(), "%.1f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+}
+
+@Composable
+fun VoiceCallOverlay(
+    viewModel: ChatViewModel,
+    peer: PeerEntity
+) {
+    val callState = viewModel.callState
+    val callDurationSec = viewModel.callDurationSec
+    val isMuted = viewModel.isCallMuted
+    val isSpeaker = viewModel.isCallSpeaker
+
+    // Formatted time mm:ss
+    val minutes = callDurationSec / 60
+    val seconds = callDurationSec % 60
+    val timeText = String.format("%02d:%02d", minutes, seconds)
+
+    // Pulse animation using infinite transition for the ringing background
+    val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulseScale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF13151A)) // Premium deep dark cosmos background
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxHeight()
+        ) {
+            // Top Section: App info / Call Type
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 40.dp)
+            ) {
+                Text(
+                    text = "KENDI GÜVENLİ ARAMA",
+                    letterSpacing = 2.sp,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (peer.isInternetFallback) Icons.Default.Cloud else Icons.Default.Wifi,
+                        contentDescription = null,
+                        tint = if (peer.isInternetFallback) BrilliantLavender else ElegantGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (peer.isInternetFallback) "Bulut Bağlantısı" else "Doğrudan Yerel Kanal",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            // Middle Section: Name, Pulsing Avatar, and Timer
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(160.dp)
+                ) {
+                    // Outer Animating Pulse Ripple Ring
+                    if (callState == "DIALING" || callState == "CONNECTED") {
+                        Box(
+                            modifier = Modifier
+                                .size(130.dp * pulseScale)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    shape = CircleShape
+                                )
+                        )
+                    }
+
+                    // Main Avatar Circle Background
+                    Box(
+                        modifier = Modifier
+                            .size(110.dp)
+                            .background(
+                                color = if (peer.isInternetFallback) BrilliantLavender else ElegantGreen,
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = peer.name.take(1).uppercase(),
+                            fontSize = 44.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = peer.name,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = when (callState) {
+                        "DIALING" -> "ARANIYOR..."
+                        "CONNECTED" -> "BAĞLANDI"
+                        "ENDED" -> "ARAMA SONLANDIRILDI"
+                        else -> "ARAMA HAZIRLANIYOR"
+                    },
+                    fontSize = 14.sp,
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = when (callState) {
+                        "CONNECTED" -> ElegantGreen
+                        "ENDED" -> Color.Red
+                        else -> Color.White.copy(alpha = 0.6f)
+                    }
+                )
+
+                if (callState == "CONNECTED") {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = timeText,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Bottom Section: Control Buttons
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(bottom = 50.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Mute Control
+                    IconButton(
+                        onClick = { viewModel.isCallMuted = !isMuted },
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(
+                                color = if (isMuted) Color.White else Color.White.copy(alpha = 0.1f),
+                                shape = CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                            contentDescription = "Mute",
+                            tint = if (isMuted) Color.Black else Color.White
+                        )
+                    }
+
+                    // Hang Up Button
+                    IconButton(
+                        onClick = { viewModel.endVoiceCall() },
+                        modifier = Modifier
+                            .size(72.dp)
+                            .background(
+                                color = Color(0xFFF44336),
+                                shape = CircleShape
+                            ).testTag("end_call_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = "Hang Up",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    // Speakerphone Control
+                    IconButton(
+                        onClick = { viewModel.isCallSpeaker = !isSpeaker },
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(
+                                color = if (isSpeaker) Color.White else Color.White.copy(alpha = 0.1f),
+                                shape = CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = if (isSpeaker) Icons.Default.VolumeUp else Icons.Default.VolumeMute,
+                            contentDescription = "Speaker",
+                            tint = if (isSpeaker) Color.Black else Color.White
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

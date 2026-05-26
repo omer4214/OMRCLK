@@ -22,6 +22,7 @@ import com.example.data.network.UserProfile
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import com.example.data.repository.ChatRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -76,6 +77,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var mediaPlayer: MediaPlayer? = null
     var currentlyPlayingMessageId by mutableStateOf<Long?>(null)
         private set
+
+    // --- Sesli Arama (Voice Call) States ---
+    var activeCallPeer by mutableStateOf<PeerEntity?>(null)
+        internal set
+    var callState by mutableStateOf("IDLE") // IDLE, DIALING, CONNECTED, ENDED
+        internal set
+    var callDurationSec by mutableStateOf(0)
+        internal set
+    var isCallMuted by mutableStateOf(false)
+    var isCallSpeaker by mutableStateOf(false)
+
+    private var callTimerJob: Job? = null
 
     // --- Friend System & Authenticated User States ---
     private val internetHelper = InternetHelper(application)
@@ -342,6 +355,93 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         mediaRecorder = null
         mediaPlayer?.release()
         mediaPlayer = null
+    }
+
+    // --- Interactive Voice Calling (VoIP Simulation) Methods ---
+    fun initiateVoiceCall(peer: PeerEntity) {
+        activeCallPeer = peer
+        callState = "DIALING"
+        callDurationSec = 0
+        isCallMuted = false
+        isCallSpeaker = false
+        
+        viewModelScope.launch {
+            // Play calling tone
+            try {
+                val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_VOICE_CALL, 80)
+                for (i in 1..2) {
+                    if (callState != "DIALING") break
+                    tg.startTone(android.media.ToneGenerator.TONE_SUP_DIAL, 1000)
+                    delay(2500)
+                }
+                tg.release()
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Tone generator error: ${e.message}")
+            }
+            
+            // Connect automatically after simulating dialing
+            if (callState == "DIALING") {
+                connectVoiceCall()
+            }
+        }
+    }
+
+    private fun connectVoiceCall() {
+        callState = "CONNECTED"
+        callTimerJob?.cancel()
+        callTimerJob = viewModelScope.launch(Dispatchers.Default) {
+            while (callState == "CONNECTED") {
+                delay(1000)
+                withContext(Dispatchers.Main) {
+                    callDurationSec++
+                }
+            }
+        }
+    }
+
+    fun endVoiceCall() {
+        val duration = callDurationSec
+        val peer = activeCallPeer
+        callTimerJob?.cancel()
+        callTimerJob = null
+        callState = "ENDED"
+        
+        viewModelScope.launch {
+            delay(1500)
+            activeCallPeer = null
+            callState = "IDLE"
+            callDurationSec = 0
+        }
+
+        if (peer != null) {
+            val minutes = duration / 60
+            val seconds = duration % 60
+            val durationText = String.format("%02d:%02d", minutes, seconds)
+            val callLogMessage = "📞 Sesli Arama Gerçekleştirildi (Süre: $durationText)"
+            
+            viewModelScope.launch {
+                if (peer.isInternetFallback) {
+                    val room = currentRoomCode
+                    if (room.isNotEmpty()) {
+                        internetHelper.sendInternetMessage(
+                            roomCode = room,
+                            nickname = myNickname,
+                            text = callLogMessage
+                        )
+                    }
+                } else {
+                    repository.registerOrUpdatePeer(peer.peerId, peer.name, peer.lastIp, false)
+                    repository.localInsertMessage(
+                        MessageEntity(
+                            peerId = peer.peerId,
+                            sender = "me",
+                            text = callLogMessage,
+                            status = "SENT"
+                        )
+                    )
+                }
+            }
+        }
     }
 
     // --- GitHub Auto-Updater States ---
