@@ -29,27 +29,33 @@ class InternetHelper(private val context: Context) {
     private val localPrefs = context.getSharedPreferences("local_user_profiles", Context.MODE_PRIVATE)
 
     init {
-        // Pre-populate 10 mock/sandbox accounts if they don't exist yet
-        if (!localPrefs.getBoolean("prepopulated_v11_fixed", false)) {
+        // Pre-populate 11 mock/sandbox accounts if they don't exist yet
+        if (!localPrefs.getBoolean("prepopulated_v12_fixed", false)) {
             val defaultUsers = listOf(
+                UserProfile(
+                    email = "napim4214@gmail.com",
+                    passwordHash = "12345678",
+                    name = "Napim",
+                    friends = listOf("tazmana@gmail.com", "ali@gmail.com", "veli@gmail.com")
+                ),
                 UserProfile(
                     email = "tazmana@gmail.com",
                     passwordHash = "12345678",
                     name = "GKC",
-                    friends = listOf("ali@gmail.com", "veli@gmail.com", "ayse@gmail.com")
+                    friends = listOf("ali@gmail.com", "veli@gmail.com", "ayse@gmail.com", "napim4214@gmail.com")
                 ),
                 UserProfile(
                     email = "ali@gmail.com",
                     passwordHash = "12345678",
                     name = "Ali",
-                    friends = listOf("tazmana@gmail.com", "veli@gmail.com"),
+                    friends = listOf("tazmana@gmail.com", "veli@gmail.com", "napim4214@gmail.com"),
                     pendingIncoming = listOf("can@gmail.com")
                 ),
                 UserProfile(
                     email = "veli@gmail.com",
                     passwordHash = "12345678",
                     name = "Veli",
-                    friends = listOf("tazmana@gmail.com", "ali@gmail.com"),
+                    friends = listOf("tazmana@gmail.com", "ali@gmail.com", "napim4214@gmail.com"),
                     pendingOutgoing = listOf("mustafa@gmail.com")
                 ),
                 UserProfile(
@@ -102,7 +108,7 @@ class InternetHelper(private val context: Context) {
                 val json = userAdapter.toJson(u)
                 editor.putString("user_$cleanEmail", json)
             }
-            editor.putBoolean("prepopulated_v11_fixed", true)
+            editor.putBoolean("prepopulated_v12_fixed", true)
             editor.apply()
         }
     }
