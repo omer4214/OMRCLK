@@ -23,7 +23,7 @@ class InternetHelper(private val context: Context) {
     private val roomAdapter = moshi.adapter(InternetRoomState::class.java)
     private val userAdapter = moshi.adapter(UserProfile::class.java)
 
-    private val bucketUrl = "https://kvdb.io/kendi_v11_p2p_9942a73bdf"
+    private val bucketUrl = "https://kvdb.io/9QYHxe28Fptx6sF1t4tuPr"
     private var lastUpdateError: String = ""
 
     // Generate a unique client ID per app launch/install
