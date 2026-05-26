@@ -346,18 +346,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         // Support direct APK URLs if entered
         if (repo.startsWith("http://", ignoreCase = true) || repo.startsWith("https://", ignoreCase = true)) {
-            if (repo.endsWith(".apk", ignoreCase = true)) {
-                updateStatus = "AVAILABLE"
-                updateVersionName = "Doğrudan Link"
-                updateDownloadUrl = repo
-                val lastSlash = repo.lastIndexOf('/')
-                updateApkFileName = if (lastSlash != -1) repo.substring(lastSlash + 1) else "direct_download.apk"
-                return
+            updateStatus = "AVAILABLE"
+            updateVersionName = "Doğrudan Bağlantı"
+            updateDownloadUrl = repo
+            
+            val lastSlash = repo.lastIndexOf('/')
+            val baseName = if (lastSlash != -1) repo.substring(lastSlash + 1) else "direct_download"
+            // Ensure the downloaded file is saved with .apk extension
+            updateApkFileName = if (baseName.endsWith(".apk", ignoreCase = true)) {
+                baseName
             } else {
-                updateStatus = "ERROR"
-                updateErrorMessage = "Girilen doğrudan URL .apk ile bitmelidir."
-                return
+                "dynamic_update.apk"
             }
+            return
         }
 
         val parts = repo.split("/")
