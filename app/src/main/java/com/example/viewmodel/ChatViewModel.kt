@@ -369,17 +369,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         isCallSpeaker = false
         
         viewModelScope.launch {
-            // Play calling tone
+            // Simulating dialing delay safely (avoiding native ToneGenerator to prevent crashes in headless/audio-less environments)
             try {
-                val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_VOICE_CALL, 80)
                 for (i in 1..2) {
                     if (callState != "DIALING") break
-                    tg.startTone(android.media.ToneGenerator.TONE_SUP_DIAL, 1000)
                     delay(2500)
                 }
-                tg.release()
             } catch (e: Exception) {
-                Log.e("ChatViewModel", "Tone generator error: ${e.message}")
+                Log.e("ChatViewModel", "Dialing simulation error: ${e.message}")
             }
             
             // Connect automatically after simulating dialing
